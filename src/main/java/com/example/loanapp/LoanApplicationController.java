@@ -371,6 +371,7 @@ public class LoanApplicationController {
 
     // Delete a loan by its tracking ID
     @DeleteMapping("/delete/{trackingId}")
+    @CrossOrigin(origins = "https://kopesha.vercel.app")
     public ResponseEntity<Map<String, String>> deleteLoan(@PathVariable String trackingId) {
         Optional<LoanApplication> loanOptional = repository.findByTrackingId(trackingId);
 
