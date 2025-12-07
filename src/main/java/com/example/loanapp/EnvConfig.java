@@ -5,5 +5,7 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class EnvConfig {
-    public static final Dotenv dotenv = Dotenv.load();
+    public static final Dotenv dotenv = Dotenv.configure().ignoreIfMissing()
+            .load();
 }
+
