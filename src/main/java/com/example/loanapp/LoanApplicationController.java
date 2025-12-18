@@ -135,7 +135,7 @@ public class LoanApplicationController {
             payload.put("PartyA", phone);
             payload.put("PartyB", shortcode);
             payload.put("PhoneNumber", phone);
-            payload.put("CallBackURL", callbackUrl);
+            payload.put("CallBackURL", callbackUrl); // ✅ Ensure it's https://...
             payload.put("AccountReference", "Loan Verification");
             payload.put("TransactionDesc", "Verification Payment");
 
@@ -157,6 +157,20 @@ public class LoanApplicationController {
 
             // 7️⃣ Parse response safely
             JsonNode root = objectMapper.readTree(response);
+
+            // Handle MPESA errors first
+            if (root.has("errorCode")) {
+                String errorCode = root.get("errorCode").asText();
+                String errorMessage = root.get("errorMessage").asText();
+                System.err.println("MPESA error: " + errorCode + " - " + errorMessage);
+                return ResponseEntity.status(400).body(Map.of(
+                        "error", errorMessage,
+                        "errorCode", errorCode,
+                        "rawResponse", response
+                ));
+            }
+
+            // If CheckoutRequestID exists, save it
             if (root.has("CheckoutRequestID")) {
                 String checkoutRequestID = root.get("CheckoutRequestID").asText();
                 loan.setStatus("PENDING");
@@ -166,19 +180,21 @@ public class LoanApplicationController {
                 // Track payment status
                 paymentStatusMap.put(checkoutRequestID, new PaymentStatus("pending", "STK Push sent"));
 
-                System.out.println("STK Push successfully initiated for loan " + loan.getTrackingId() + ", CheckoutRequestID: " + checkoutRequestID);
+                System.out.println("STK Push successfully initiated for loan " + loan.getTrackingId() +
+                        ", CheckoutRequestID: " + checkoutRequestID);
 
                 return ResponseEntity.ok(Map.of(
                         "message", "STK Push sent successfully",
                         "checkoutRequestID", checkoutRequestID
                 ));
-            } else {
-                System.err.println("No CheckoutRequestID returned: " + response);
-                return ResponseEntity.status(500).body(Map.of(
-                        "error", "STK Push failed, no CheckoutRequestID returned",
-                        "rawResponse", response
-                ));
             }
+
+            // Unknown response
+            System.err.println("Unknown MPESA response: " + response);
+            return ResponseEntity.status(500).body(Map.of(
+                    "error", "Unknown response from MPESA",
+                    "rawResponse", response
+            ));
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -186,6 +202,7 @@ public class LoanApplicationController {
             return ResponseEntity.status(500).body(Map.of("error", "STK Push failed: " + e.getMessage()));
         }
     }
+
 
 
 
