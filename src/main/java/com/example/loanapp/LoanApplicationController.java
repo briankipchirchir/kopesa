@@ -82,50 +82,50 @@ public class LoanApplicationController {
         return repository.save(application);
     }
     @PostMapping("/stk-push")
-    public String initiateStkPush(@RequestBody StkPushRequest request) {
+    public ResponseEntity<Map<String, Object>> initiateStkPush(@RequestBody StkPushRequest request) {
         try {
-            // 1. Find the loan by trackingId
+            // 1️⃣ Find loan by trackingId
             Optional<LoanApplication> loanOptional = repository.findByTrackingId(request.getTrackingId());
             if (loanOptional.isEmpty()) {
-                return "{\"error\": \"Loan not found for trackingId: " + request.getTrackingId() + "\"}";
+                System.err.println("Loan not found for trackingId: " + request.getTrackingId());
+                return ResponseEntity.status(404).body(Map.of(
+                        "error", "Loan not found for trackingId: " + request.getTrackingId()
+                ));
             }
-
             LoanApplication loan = loanOptional.get();
 
-            // 2. Format phone number
+            // 2️⃣ Format phone
             String phone = formatPhone(request.getPhone());
+            System.out.println("Initiating STK Push for phone: " + phone + ", loan: " + loan.getTrackingId());
 
-            // 3. Get Access Token
+            // 3️⃣ Get Access Token
             String auth = consumerKey + ":" + consumerSecret;
             String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
 
             HttpHeaders tokenHeaders = new HttpHeaders();
             tokenHeaders.set("Authorization", "Basic " + encodedAuth);
 
-            // DEBUG LOGS (TEMPORARY)
-            System.out.println("=== MPESA OAUTH DEBUG ===");
-            System.out.println("Consumer Key loaded: " + (consumerKey != null));
-            System.out.println("Consumer Secret loaded: " + (consumerSecret != null));
-            System.out.println("Consumer Key length: " + (consumerKey != null ? consumerKey.length() : 0));
-            System.out.println("Consumer Secret length: " + (consumerSecret != null ? consumerSecret.length() : 0));
-            System.out.println("Using LIVE OAuth URL");
-            System.out.println("========================");
-
-
+            System.out.println("Requesting MPESA OAuth token...");
             ResponseEntity<Map> tokenRes = restTemplate.exchange(
                     "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
                     HttpMethod.GET,
                     new HttpEntity<>(tokenHeaders),
                     Map.class
             );
+            System.out.println("OAuth token response: " + tokenRes.getBody());
+
+            if (tokenRes.getBody() == null || !tokenRes.getBody().containsKey("access_token")) {
+                System.err.println("No access token returned from MPESA OAuth");
+                return ResponseEntity.status(500).body(Map.of("error", "Failed to get access token from MPESA"));
+            }
 
             String accessToken = (String) tokenRes.getBody().get("access_token");
 
-            // 4. Generate password and timestamp
+            // 4️⃣ Generate password and timestamp
             String timestamp = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date());
             String password = Base64.getEncoder().encodeToString((shortcode + passkey + timestamp).getBytes());
 
-            // 5. Build STK payload
+            // 5️⃣ Build STK Push payload
             Map<String, Object> payload = new HashMap<>();
             payload.put("BusinessShortCode", shortcode);
             payload.put("Password", password);
@@ -139,7 +139,9 @@ public class LoanApplicationController {
             payload.put("AccountReference", "Loan Verification");
             payload.put("TransactionDesc", "Verification Payment");
 
-            // 6. Send STK Push
+            System.out.println("STK Push payload: " + payload);
+
+            // 6️⃣ Send STK Push
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(accessToken);
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -151,31 +153,40 @@ public class LoanApplicationController {
             );
 
             String response = stkRes.getBody();
+            System.out.println("STK Push raw response: " + response);
 
-            // 7. Extract CheckoutRequestID and save to loan
+            // 7️⃣ Parse response safely
             JsonNode root = objectMapper.readTree(response);
             if (root.has("CheckoutRequestID")) {
                 String checkoutRequestID = root.get("CheckoutRequestID").asText();
-                // Set the loan status to PENDING immediately
                 loan.setStatus("PENDING");
                 loan.setCheckoutRequestID(checkoutRequestID);
                 repository.save(loan);
 
-                // Initialize payment status as pending
+                // Track payment status
                 paymentStatusMap.put(checkoutRequestID, new PaymentStatus("pending", "STK Push sent"));
 
-                System.out.println("STK Push initiated for loan " + loan.getTrackingId() + ": " + checkoutRequestID);
-            } else {
-                System.err.println("No CheckoutRequestID returned from STK push: " + response);
-            }
+                System.out.println("STK Push successfully initiated for loan " + loan.getTrackingId() + ", CheckoutRequestID: " + checkoutRequestID);
 
-            return response;
+                return ResponseEntity.ok(Map.of(
+                        "message", "STK Push sent successfully",
+                        "checkoutRequestID", checkoutRequestID
+                ));
+            } else {
+                System.err.println("No CheckoutRequestID returned: " + response);
+                return ResponseEntity.status(500).body(Map.of(
+                        "error", "STK Push failed, no CheckoutRequestID returned",
+                        "rawResponse", response
+                ));
+            }
 
         } catch (Exception e) {
             e.printStackTrace();
-            return "{\"error\": \"STK Push failed: " + e.getMessage() + "\"}";
+            System.err.println("STK Push failed for loan " + request.getTrackingId() + ": " + e.getMessage());
+            return ResponseEntity.status(500).body(Map.of("error", "STK Push failed: " + e.getMessage()));
         }
     }
+
 
 
     @GetMapping("/all")
