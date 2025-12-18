@@ -102,6 +102,16 @@ public class LoanApplicationController {
             HttpHeaders tokenHeaders = new HttpHeaders();
             tokenHeaders.set("Authorization", "Basic " + encodedAuth);
 
+            // DEBUG LOGS (TEMPORARY)
+            System.out.println("=== MPESA OAUTH DEBUG ===");
+            System.out.println("Consumer Key loaded: " + (consumerKey != null));
+            System.out.println("Consumer Secret loaded: " + (consumerSecret != null));
+            System.out.println("Consumer Key length: " + (consumerKey != null ? consumerKey.length() : 0));
+            System.out.println("Consumer Secret length: " + (consumerSecret != null ? consumerSecret.length() : 0));
+            System.out.println("Using LIVE OAuth URL");
+            System.out.println("========================");
+
+
             ResponseEntity<Map> tokenRes = restTemplate.exchange(
                     "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
                     HttpMethod.GET,
