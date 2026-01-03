@@ -25,6 +25,9 @@ public class LoanApplication {
     @Column(columnDefinition = "TEXT")
     private String mpesaMessage;
 
+    @Temporal(TemporalType.TIMESTAMP)
+    private Date mpesaMessageDate;
+
     @Column(unique = true)
     private String checkoutRequestID;
 

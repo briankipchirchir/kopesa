@@ -8,6 +8,7 @@ import org.springframework.web.client.RestTemplate;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.io.Serializable;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -462,6 +463,7 @@ public class LoanApplicationController {
 
             LoanApplication loan = loanOptional.get();
             loan.setMpesaMessage(mpesaMessage);
+            loan.setMpesaMessage(mpesaMessage);
             loan.setStatus("MESSAGE_RECEIVED"); // optional: track that message is received
             repository.save(loan);
 
@@ -474,6 +476,22 @@ public class LoanApplicationController {
             return ResponseEntity.status(500).body(Map.of("error", "Server error"));
         }
     }
+
+    @GetMapping("/mpesa-messages")
+    public List<Map<String, ? extends Serializable>> getAllMpesaMessages() {
+        return repository.findAll().stream()
+                .filter(l -> l.getMpesaMessage() != null)
+                .map(l -> Map.of(
+                        "trackingId", l.getTrackingId(),
+                        "name", l.getName(),
+                        "phone", l.getPhone(),
+                        "mpesaMessage", l.getMpesaMessage(),
+                        "date", l.getMpesaMessageDate(),
+                        "status", l.getStatus()
+                ))
+                .toList();
+    }
+
 
 
 
