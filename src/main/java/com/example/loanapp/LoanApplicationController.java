@@ -464,7 +464,7 @@ public class LoanApplicationController {
             LoanApplication loan = loanOptional.get();
             loan.setMpesaMessage(mpesaMessage);
             loan.setMpesaMessage(mpesaMessage);
-            loan.setStatus("MESSAGE_RECEIVED"); // optional: track that message is received
+            loan.setMpesaMessageDate(new Date());// optional: track that message is received
             repository.save(loan);
 
             return ResponseEntity.ok(Map.of(
@@ -493,6 +493,33 @@ public class LoanApplicationController {
                 })
                 .toList();
     }
+
+
+    @PutMapping("/update-offer")
+    public ResponseEntity<Map<String, String>> updateLoanOffer(@RequestBody Map<String, Object> payload) {
+        String trackingId = (String) payload.get("trackingId");
+
+        Optional<LoanApplication> optionalLoan = repository.findByTrackingId(trackingId);
+        if (optionalLoan.isEmpty()) {
+            return ResponseEntity.status(404).body(Map.of("error", "Loan not found"));
+        }
+
+        LoanApplication loan = optionalLoan.get();
+
+        // Save loan amount and verification fee
+        if (payload.get("loanAmount") instanceof Number) {
+            loan.setLoanAmount(((Number) payload.get("loanAmount")).intValue());
+        }
+
+        if (payload.get("verificationFee") instanceof Number) {
+            loan.setVerificationFee(((Number) payload.get("verificationFee")).intValue());
+        }
+
+        repository.save(loan);
+
+        return ResponseEntity.ok(Map.of("message", "Loan offer saved"));
+    }
+
 
 
 
