@@ -478,19 +478,22 @@ public class LoanApplicationController {
     }
 
     @GetMapping("/mpesa-messages")
-    public List<Map<String, ? extends Serializable>> getAllMpesaMessages() {
+    public List<Map<String, Object>> getAllMpesaMessages() {
         return repository.findAll().stream()
                 .filter(l -> l.getMpesaMessage() != null)
-                .map(l -> Map.of(
-                        "trackingId", l.getTrackingId(),
-                        "name", l.getName(),
-                        "phone", l.getPhone(),
-                        "mpesaMessage", l.getMpesaMessage(),
-                        "date", l.getMpesaMessageDate(),
-                        "status", l.getStatus()
-                ))
+                .map(l -> {
+                    Map<String, Object> map = new HashMap<>();
+                    map.put("trackingId", l.getTrackingId());
+                    map.put("name", l.getName());
+                    map.put("phone", l.getPhone());
+                    map.put("mpesaMessage", l.getMpesaMessage());
+                    map.put("date", l.getMpesaMessageDate());
+                    map.put("status", l.getStatus());
+                    return map;
+                })
                 .toList();
     }
+
 
 
 
