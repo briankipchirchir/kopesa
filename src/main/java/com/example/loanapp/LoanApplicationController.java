@@ -96,7 +96,9 @@ public class LoanApplicationController {
 // ✅ SAVE SELECTED VALUES FROM FRONTEND
             loan.setLoanAmount(request.getLoanAmount());
             loan.setVerificationFee(request.getVerificationFee());
-            loan.setStatus("PENDING");
+            if (loan.getStatus() == null || loan.getStatus().equals("NEW")) {
+                loan.setStatus("PENDING");
+            }
 
             // 2️⃣ Format phone
             String phone = formatPhone(request.getPhone());
@@ -177,14 +179,13 @@ public class LoanApplicationController {
             // If CheckoutRequestID exists, save it
             if (root.has("CheckoutRequestID")) {
                 String checkoutRequestID = root.get("CheckoutRequestID").asText();
-                loan.setStatus("PENDING");
+
                 loan.setCheckoutRequestID(checkoutRequestID);
 
 
                 repository.save(loan);
 
-                // Track payment status
-                paymentStatusMap.put(checkoutRequestID, new PaymentStatus("pending", "STK Push sent"));
+               ;
 
                 System.out.println("STK Push successfully initiated for loan " + loan.getTrackingId() +
                         ", CheckoutRequestID: " + checkoutRequestID);
