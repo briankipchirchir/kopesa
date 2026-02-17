@@ -39,15 +39,34 @@ public class LoanApplicationController {
     private RestTemplate restTemplate = new RestTemplate();
     private ObjectMapper objectMapper = new ObjectMapper();
 
-    // LOAD MPESA VARIABLES
-    private final String consumerKey = EnvConfig.dotenv.get("MPESA_CONSUMER_KEY");
-    private final String consumerSecret = EnvConfig.dotenv.get("MPESA_CONSUMER_SECRET");
-    private final String shortcode = EnvConfig.dotenv.get("MPESA_SHORTCODE");
-    private final String passkey = EnvConfig.dotenv.get("MPESA_PASSKEY");
-    private final String callbackUrl = EnvConfig.dotenv.get("MPESA_CALLBACK_URL");
+    // =====================================================================
+    // OLD SAFARICOM / DARAJA CREDENTIALS (commented out — kept for reference)
+    // =====================================================================
+    // private final String consumerKey = EnvConfig.dotenv.get("MPESA_CONSUMER_KEY");
+    // private final String consumerSecret = EnvConfig.dotenv.get("MPESA_CONSUMER_SECRET");
+    // private final String shortcode = EnvConfig.dotenv.get("MPESA_SHORTCODE");
+    // private final String passkey = EnvConfig.dotenv.get("MPESA_PASSKEY");
+    // private final String callbackUrl = EnvConfig.dotenv.get("MPESA_CALLBACK_URL");
+
+    // =====================================================================
+    // PAYHERO CREDENTIALS
+    // Add these to your .env file:
+    //   PAYHERO_API_USERNAME=zrFinMcH60MMV8mKVFwq
+    //   PAYHERO_API_PASSWORD=your_password_here
+    //   PAYHERO_CHANNEL_ID=your_channel_id_here
+    //   PAYHERO_CALLBACK_URL=https://kopesa.onrender.com/api/loans/mpesa/callback
+    // =====================================================================
+    private final String payHeroUsername = EnvConfig.dotenv.get("PAYHERO_API_USERNAME");
+    private final String payHeroPassword = EnvConfig.dotenv.get("PAYHERO_API_PASSWORD");
+    private final String payHeroChannelId = EnvConfig.dotenv.get("PAYHERO_CHANNEL_ID");
+    private final String callbackUrl = EnvConfig.dotenv.get("PAYHERO_CALLBACK_URL");
+
+    // PayHero STK Push endpoint
+    private static final String PAYHERO_STK_URL = "https://backend.payhero.co.ke/api/v2/payments";
 
     // Map to store payment statuses
     private static final Map<String, PaymentStatus> paymentStatusMap = new ConcurrentHashMap<>();
+
     @Autowired
     private LoanApplicationRepository loanApplicationRepository;
 
@@ -64,10 +83,18 @@ public class LoanApplicationController {
         }
     }
 
+    // =========================================================
+    // Helper: build PayHero Basic Auth header
+    // PayHero uses Basic Auth (base64 of "username:password")
+    // on every request — no separate token fetch needed.
+    // =========================================================
+    private String getPayHeroBasicAuth() {
+        String credentials = payHeroUsername + ":" + payHeroPassword;
+        return "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes());
+    }
+
     @PostMapping("/apply")
     public LoanApplication applyLoan(@RequestBody LoanApplication application) {
-        // Random loan amount between 10,000 - 250,000
-
         application.setStatus("PENDING");
         application.setApplicationDate(new Date());
 
@@ -78,10 +105,11 @@ public class LoanApplicationController {
 
         return repository.save(application);
     }
+
     @PostMapping("/stk-push")
     public ResponseEntity<Map<String, Object>> initiateStkPush(@RequestBody StkPushRequest request) {
         try {
-            // 1️⃣ Find loan by trackingId
+            // 1. Find loan by trackingId
             Optional<LoanApplication> loanOptional = repository.findByTrackingId(request.getTrackingId());
             if (loanOptional.isEmpty()) {
                 System.err.println("Loan not found for trackingId: " + request.getTrackingId());
@@ -91,20 +119,22 @@ public class LoanApplicationController {
             }
             LoanApplication loan = loanOptional.get();
 
-            // AFTER finding the loan
-
-// ✅ SAVE SELECTED VALUES FROM FRONTEND
+            // Save selected values from frontend
             loan.setLoanAmount(request.getLoanAmount());
             loan.setVerificationFee(request.getVerificationFee());
             if (loan.getStatus() == null || loan.getStatus().equals("NEW")) {
                 loan.setStatus("PENDING");
             }
 
-            // 2️⃣ Format phone
+            // 2. Format phone
             String phone = formatPhone(request.getPhone());
-            System.out.println("Initiating STK Push for phone: " + phone + ", loan: " + loan.getTrackingId());
+            System.out.println("Initiating PayHero STK Push for phone: " + phone + ", loan: " + loan.getTrackingId());
 
-            // 3️⃣ Get Access Token
+            // =====================================================================
+            // OLD SAFARICOM STK PUSH BLOCK (commented out — kept for reference)
+            // =====================================================================
+            /*
+            // 3. Get Safaricom Access Token
             String auth = consumerKey + ":" + consumerSecret;
             String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
 
@@ -127,11 +157,11 @@ public class LoanApplicationController {
 
             String accessToken = (String) tokenRes.getBody().get("access_token");
 
-            // 4️⃣ Generate password and timestamp
+            // 4. Generate password and timestamp
             String timestamp = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date());
             String password = Base64.getEncoder().encodeToString((shortcode + passkey + timestamp).getBytes());
 
-            // 5️⃣ Build STK Push payload
+            // 5. Build Safaricom STK Push payload
             Map<String, Object> payload = new HashMap<>();
             payload.put("BusinessShortCode", shortcode);
             payload.put("Password", password);
@@ -141,13 +171,13 @@ public class LoanApplicationController {
             payload.put("PartyA", phone);
             payload.put("PartyB", shortcode);
             payload.put("PhoneNumber", phone);
-            payload.put("CallBackURL", callbackUrl); // ✅ Ensure it's https://...
+            payload.put("CallBackURL", callbackUrl);
             payload.put("AccountReference", "Loan Verification");
             payload.put("TransactionDesc", "Verification Payment");
 
             System.out.println("STK Push payload: " + payload);
 
-            // 6️⃣ Send STK Push
+            // 6. Send Safaricom STK Push
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(accessToken);
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -157,38 +187,71 @@ public class LoanApplicationController {
                     new HttpEntity<>(payload, headers),
                     String.class
             );
+            */
+            // =====================================================================
+            // END OLD SAFARICOM BLOCK
+            // =====================================================================
+
+
+            // =====================================================================
+            // NEW PAYHERO STK PUSH BLOCK
+            // =====================================================================
+
+            // 3. Build PayHero STK Push payload
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("amount", request.getAmount());
+            payload.put("phone_number", phone);
+            payload.put("channel_id", Integer.parseInt(payHeroChannelId));
+            payload.put("provider", "m-pesa");
+            payload.put("external_reference", loan.getTrackingId()); // use trackingId as reference
+            payload.put("customer_name", loan.getName() != null ? loan.getName() : "Customer");
+            payload.put("callback_url", callbackUrl);
+
+            System.out.println("PayHero STK Push payload: " + payload);
+
+            // 4. Send PayHero STK Push (Basic Auth — no separate token fetch needed)
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("Authorization", getPayHeroBasicAuth());
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            ResponseEntity<String> stkRes = restTemplate.postForEntity(
+                    PAYHERO_STK_URL,
+                    new HttpEntity<>(payload, headers),
+                    String.class
+            );
+
+            // =====================================================================
+            // END NEW PAYHERO BLOCK
+            // =====================================================================
 
             String response = stkRes.getBody();
-            System.out.println("STK Push raw response: " + response);
+            System.out.println("PayHero STK Push raw response: " + response);
 
-            // 7️⃣ Parse response safely
+            // 5. Parse response
             JsonNode root = objectMapper.readTree(response);
 
-            // Handle MPESA errors first
-            if (root.has("errorCode")) {
-                String errorCode = root.get("errorCode").asText();
-                String errorMessage = root.get("errorMessage").asText();
-                System.err.println("MPESA error: " + errorCode + " - " + errorMessage);
+            // Handle PayHero errors
+            if (root.has("error") || (root.has("success") && !root.get("success").asBoolean())) {
+                String errorMessage = root.has("error") ? root.get("error").asText()
+                        : root.has("message") ? root.get("message").asText() : "Unknown error from PayHero";
+                System.err.println("PayHero error: " + errorMessage);
                 return ResponseEntity.status(400).body(Map.of(
                         "error", errorMessage,
-                        "errorCode", errorCode,
                         "rawResponse", response
                 ));
             }
 
-            // If CheckoutRequestID exists, save it
+            // PayHero returns CheckoutRequestID on success
             if (root.has("CheckoutRequestID")) {
                 String checkoutRequestID = root.get("CheckoutRequestID").asText();
 
                 loan.setCheckoutRequestID(checkoutRequestID);
-
-
                 repository.save(loan);
 
-               ;
+                paymentStatusMap.put(checkoutRequestID, new PaymentStatus("pending", "PayHero STK Push sent"));
 
-                System.out.println("STK Push successfully initiated for loan " + loan.getTrackingId() +
-                        ", CheckoutRequestID: " + checkoutRequestID);
+                System.out.println("PayHero STK Push successfully initiated for loan " + loan.getTrackingId()
+                        + ", CheckoutRequestID: " + checkoutRequestID);
 
                 return ResponseEntity.ok(Map.of(
                         "message", "STK Push sent successfully",
@@ -197,9 +260,9 @@ public class LoanApplicationController {
             }
 
             // Unknown response
-            System.err.println("Unknown MPESA response: " + response);
+            System.err.println("Unknown PayHero response: " + response);
             return ResponseEntity.status(500).body(Map.of(
-                    "error", "Unknown response from MPESA",
+                    "error", "Unknown response from PayHero",
                     "rawResponse", response
             ));
 
@@ -210,14 +273,15 @@ public class LoanApplicationController {
         }
     }
 
-
-
-
     @GetMapping("/all")
     public List<LoanApplication> getAllLoans() {
         return repository.findAll();
     }
 
+    // =====================================================================
+    // OLD sendStkPush() — Safaricom direct (commented out, kept for reference)
+    // =====================================================================
+    /*
     private String sendStkPush(String phone, int amount) {
         try {
             // 1. Get Access Token
@@ -272,25 +336,18 @@ public class LoanApplicationController {
 
             String response = stkRes.getBody();
 
-            // Extract CheckoutRequestID and initialize status as pending
             try {
                 JsonNode root = objectMapper.readTree(response);
                 String checkoutRequestID = root.get("CheckoutRequestID").asText();
 
-              // Save CheckoutRequestID to loan
                 Optional<LoanApplication> loanOptional = repository.findByCheckoutRequestID(checkoutRequestID);
-
                 if (loanOptional.isPresent()) {
                     LoanApplication loan = loanOptional.get();
                     loan.setCheckoutRequestID(checkoutRequestID);
                     repository.save(loan);
                 }
 
-
                 paymentStatusMap.put(checkoutRequestID, new PaymentStatus("pending", "STK Push sent"));
-
-
-
                 System.out.println("STK Push initiated: " + checkoutRequestID);
             } catch (Exception e) {
                 System.err.println("Could not extract CheckoutRequestID: " + e.getMessage());
@@ -303,6 +360,7 @@ public class LoanApplicationController {
             return "{\"error\": \"STK Push failed: " + e.getMessage() + "\"}";
         }
     }
+    */
 
     private String formatPhone(String phone) {
         phone = phone.replace("+", "").replace(" ", "");
@@ -319,44 +377,76 @@ public class LoanApplicationController {
 
         throw new RuntimeException("Invalid phone number format: " + phone);
     }
+
+    // =====================================================================
+    // CALLBACK — Updated to handle PayHero's callback format
+    //
+    // PayHero sends a POST with this structure:
+    // {
+    //   "CheckoutRequestID": "ws_CO_...",
+    //   "ExternalReference":  "LON-C123456L9876543",
+    //   "ResultCode":         0,           // 0 = success
+    //   "ResultDesc":         "The service request is processed successfully.",
+    //   "Amount":             100,
+    //   "MpesaReceiptNumber": "RDK7TF0WBN"
+    // }
+    // =====================================================================
     @PostMapping("/mpesa/callback")
     public ResponseEntity<Map<String, Object>> mpesaCallback(@RequestBody Map<String, Object> payload) {
         try {
-            System.out.println("Callback received: " + payload);
+            System.out.println("PayHero Callback received: " + payload);
 
-            // Check if payload has Body
-            if (payload == null || !payload.containsKey("Body")) {
-                System.err.println("Invalid callback payload: missing Body");
-                return ResponseEntity.status(400).body(Map.of("error", "Invalid callback payload: missing Body"));
+            if (payload == null) {
+                System.err.println("Invalid callback payload: null body");
+                return ResponseEntity.status(400).body(Map.of("error", "Invalid callback payload"));
             }
 
+            // =====================================================================
+            // OLD SAFARICOM CALLBACK PARSING (commented out — kept for reference)
+            // =====================================================================
+            /*
             Map<String, Object> body = (Map<String, Object>) payload.get("Body");
-
-            // Check if Body has stkCallback
             if (body == null || !body.containsKey("stkCallback")) {
-                System.err.println("Invalid callback payload: missing stkCallback");
-                return ResponseEntity.status(400).body(Map.of("error", "Invalid callback payload: missing stkCallback"));
+                return ResponseEntity.status(400).body(Map.of("error", "Missing stkCallback"));
             }
-
             Map<String, Object> stkCallback = (Map<String, Object>) body.get("stkCallback");
-
-            // Extract required fields safely
             Integer resultCode = stkCallback.get("ResultCode") instanceof Integer
                     ? (Integer) stkCallback.get("ResultCode")
                     : Integer.parseInt(stkCallback.get("ResultCode").toString());
-
             String resultDesc = stkCallback.get("ResultDesc") != null
-                    ? stkCallback.get("ResultDesc").toString()
-                    : "No description";
-
+                    ? stkCallback.get("ResultDesc").toString() : "No description";
             String checkoutRequestID = stkCallback.get("CheckoutRequestID") != null
-                    ? stkCallback.get("CheckoutRequestID").toString()
-                    : null;
+                    ? stkCallback.get("CheckoutRequestID").toString() : null;
+            */
+            // =====================================================================
+            // END OLD SAFARICOM CALLBACK PARSING
+            // =====================================================================
+
+
+            // =====================================================================
+            // NEW PAYHERO CALLBACK PARSING
+            // PayHero sends a flat JSON — no nested Body/stkCallback wrapper
+            // =====================================================================
+            String checkoutRequestID = payload.get("CheckoutRequestID") != null
+                    ? payload.get("CheckoutRequestID").toString() : null;
 
             if (checkoutRequestID == null) {
-                System.err.println("Invalid callback: missing CheckoutRequestID");
+                System.err.println("Invalid PayHero callback: missing CheckoutRequestID");
                 return ResponseEntity.status(400).body(Map.of("error", "Missing CheckoutRequestID"));
             }
+
+            Integer resultCode = payload.get("ResultCode") instanceof Integer
+                    ? (Integer) payload.get("ResultCode")
+                    : payload.get("ResultCode") != null
+                    ? Integer.parseInt(payload.get("ResultCode").toString())
+                    : -1;
+
+            String resultDesc = payload.get("ResultDesc") != null
+                    ? payload.get("ResultDesc").toString() : "No description";
+            // =====================================================================
+            // END NEW PAYHERO CALLBACK PARSING
+            // =====================================================================
+
 
             // Find loan and update status
             Optional<LoanApplication> loanOptional = repository.findByCheckoutRequestID(checkoutRequestID);
@@ -378,7 +468,8 @@ public class LoanApplicationController {
                     default -> {
                         loan.setStatus("FAILED");
                         paymentStatusMap.put(checkoutRequestID, new PaymentStatus("failed", resultDesc));
-                        System.out.println("Payment failed for loan " + loan.getTrackingId());
+                        System.out.println("Payment failed for loan " + loan.getTrackingId()
+                                + ", ResultCode: " + resultCode + ", Desc: " + resultDesc);
                     }
                 }
 
@@ -390,7 +481,7 @@ public class LoanApplicationController {
             return ResponseEntity.ok(Map.of("message", "Callback processed"));
 
         } catch (Exception e) {
-            System.err.println("Error processing callback: " + e.getMessage());
+            System.err.println("Error processing PayHero callback: " + e.getMessage());
             e.printStackTrace();
             return ResponseEntity.status(500).body(Map.of("error", "Callback processing failed"));
         }
@@ -408,16 +499,13 @@ public class LoanApplicationController {
             ));
         }
 
-        LoanApplication loan = loanOptional.get(); // unwrap Optional
+        LoanApplication loan = loanOptional.get();
 
         return ResponseEntity.ok(Map.of(
                 "status", loan.getStatus(),
                 "message", "Status fetched successfully"
         ));
     }
-
-
-
 
     // Delete a loan by its tracking ID
     @DeleteMapping("/delete/{trackingId}")
@@ -427,9 +515,8 @@ public class LoanApplicationController {
 
         if (loanOptional.isPresent()) {
             LoanApplication loan = loanOptional.get();
-            repository.delete(loan);  // Delete from database
+            repository.delete(loan);
 
-            // Remove from paymentStatusMap if exists
             if (loan.getCheckoutRequestID() != null) {
                 paymentStatusMap.remove(loan.getCheckoutRequestID());
             }
@@ -464,8 +551,7 @@ public class LoanApplicationController {
 
             LoanApplication loan = loanOptional.get();
             loan.setMpesaMessage(mpesaMessage);
-            loan.setMpesaMessage(mpesaMessage);
-            loan.setMpesaMessageDate(new Date());// optional: track that message is received
+            loan.setMpesaMessageDate(new Date());
             repository.save(loan);
 
             return ResponseEntity.ok(Map.of(
@@ -495,7 +581,6 @@ public class LoanApplicationController {
                 .toList();
     }
 
-
     @PutMapping("/update-offer")
     public ResponseEntity<Map<String, String>> updateLoanOffer(@RequestBody Map<String, Object> payload) {
         String trackingId = (String) payload.get("trackingId");
@@ -507,7 +592,6 @@ public class LoanApplicationController {
 
         LoanApplication loan = optionalLoan.get();
 
-        // Save loan amount and verification fee
         if (payload.get("loanAmount") instanceof Number) {
             loan.setLoanAmount(((Number) payload.get("loanAmount")).intValue());
         }
@@ -520,10 +604,4 @@ public class LoanApplicationController {
 
         return ResponseEntity.ok(Map.of("message", "Loan offer saved"));
     }
-
-
-
-
-
-
 }
