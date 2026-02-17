@@ -391,64 +391,69 @@ public class LoanApplicationController {
     //   "MpesaReceiptNumber": "RDK7TF0WBN"
     // }
     // =====================================================================
+
+
     @PostMapping("/mpesa/callback")
     public ResponseEntity<Map<String, Object>> mpesaCallback(@RequestBody Map<String, Object> payload) {
         try {
             System.out.println("PayHero Callback received: " + payload);
 
-            if (payload == null) {
-                System.err.println("Invalid callback payload: null body");
+            if (payload == null || payload.isEmpty()) {
+                System.err.println("Invalid callback payload: null or empty body");
                 return ResponseEntity.status(400).body(Map.of("error", "Invalid callback payload"));
             }
 
-            // First, try to get 'response' map if it exists
-            Map<String, Object> responseMap = payload.get("response") instanceof Map
-                    ? (Map<String, Object>) payload.get("response")
-                    : null;
+            // Determine which field to use: CheckoutRequestID or User_Reference
+            String checkoutRequestID = null;
+            Integer resultCode = -1;
+            String resultDesc = "No description";
 
-            // Extract CheckoutRequestID or fallback to User_Reference
-            String checkoutRequestID = payload.get("CheckoutRequestID") != null
-                    ? payload.get("CheckoutRequestID").toString()
-                    : responseMap != null && responseMap.get("CheckoutRequestID") != null
-                    ? responseMap.get("CheckoutRequestID").toString()
-                    : responseMap != null && responseMap.get("User_Reference") != null
-                    ? responseMap.get("User_Reference").toString()
-                    : null;
+            if (payload.containsKey("CheckoutRequestID")) {
+                checkoutRequestID = payload.get("CheckoutRequestID").toString();
+                resultCode = payload.get("ResultCode") != null
+                        ? Integer.parseInt(payload.get("ResultCode").toString())
+                        : -1;
+                resultDesc = payload.get("ResultDesc") != null
+                        ? payload.get("ResultDesc").toString()
+                        : "No description";
+            } else if (payload.containsKey("User_Reference")) {
+                checkoutRequestID = payload.get("User_Reference").toString();
+                resultCode = payload.get("status") != null && Boolean.FALSE.equals(payload.get("status"))
+                        ? 1032 // treat as cancelled if status=false
+                        : 0;   // treat as success if status=true
+                resultDesc = "Callback received with User_Reference";
+            } else if (payload.containsKey("response")) {
+                // Some PayHero callbacks wrap details inside 'response'
+                Map<String, Object> response = (Map<String, Object>) payload.get("response");
+                if (response.containsKey("CheckoutRequestID")) {
+                    checkoutRequestID = response.get("CheckoutRequestID").toString();
+                    resultCode = response.get("ResultCode") != null
+                            ? Integer.parseInt(response.get("ResultCode").toString())
+                            : -1;
+                    resultDesc = response.get("ResultDesc") != null
+                            ? response.get("ResultDesc").toString()
+                            : "No description";
+                } else if (response.containsKey("User_Reference")) {
+                    checkoutRequestID = response.get("User_Reference").toString();
+                    resultCode = response.get("Status") != null && "Failed".equalsIgnoreCase(response.get("Status").toString())
+                            ? 1032
+                            : 0;
+                    resultDesc = response.get("ResultDesc") != null
+                            ? response.get("ResultDesc").toString()
+                            : "Callback with response.User_Reference";
+                }
+            }
 
             if (checkoutRequestID == null) {
                 System.err.println("Invalid PayHero callback: missing CheckoutRequestID/User_Reference");
-                return ResponseEntity.status(400).body(Map.of("error", "Missing CheckoutRequestID/User_Reference"));
+                return ResponseEntity.status(400).body(Map.of("error", "Missing CheckoutRequestID or User_Reference"));
             }
 
-            // Extract ResultCode
-            Integer resultCode = null;
-            if (responseMap != null && responseMap.get("ResultCode") != null) {
-                resultCode = responseMap.get("ResultCode") instanceof Integer
-                        ? (Integer) responseMap.get("ResultCode")
-                        : Integer.parseInt(responseMap.get("ResultCode").toString());
-            } else if (payload.get("ResultCode") != null) {
-                resultCode = payload.get("ResultCode") instanceof Integer
-                        ? (Integer) payload.get("ResultCode")
-                        : Integer.parseInt(payload.get("ResultCode").toString());
-            } else {
-                resultCode = -1; // unknown
-            }
-
-            // Extract ResultDesc
-            String resultDesc = null;
-            if (responseMap != null && responseMap.get("ResultDesc") != null) {
-                resultDesc = responseMap.get("ResultDesc").toString();
-            } else if (payload.get("ResultDesc") != null) {
-                resultDesc = payload.get("ResultDesc").toString();
-            } else if (responseMap != null && responseMap.get("Status") != null) {
-                // Some callbacks use "Status" field instead
-                resultDesc = responseMap.get("Status").toString();
-            } else {
-                resultDesc = "No description";
-            }
-
-            // Find loan and update status
+            // Lookup loan by CheckoutRequestID first, then fallback to TrackingId
             Optional<LoanApplication> loanOptional = repository.findByCheckoutRequestID(checkoutRequestID);
+            if (loanOptional.isEmpty()) {
+                loanOptional = repository.findByTrackingId(checkoutRequestID);
+            }
 
             if (loanOptional.isPresent()) {
                 LoanApplication loan = loanOptional.get();
@@ -477,7 +482,7 @@ public class LoanApplicationController {
                 System.err.println("Loan not found for CheckoutRequestID/User_Reference: " + checkoutRequestID);
             }
 
-            return ResponseEntity.ok(Map.of("message", "Callback processed"));
+            return ResponseEntity.ok(Map.of("message", "Callback processed successfully"));
 
         } catch (Exception e) {
             System.err.println("Error processing PayHero callback: " + e.getMessage());
@@ -485,6 +490,9 @@ public class LoanApplicationController {
             return ResponseEntity.status(500).body(Map.of("error", "Callback processing failed"));
         }
     }
+
+
+
 
 
     @GetMapping("/mpesa/status/{checkoutRequestID}")
