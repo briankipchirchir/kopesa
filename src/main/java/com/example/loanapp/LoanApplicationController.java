@@ -401,52 +401,51 @@ public class LoanApplicationController {
                 return ResponseEntity.status(400).body(Map.of("error", "Invalid callback payload"));
             }
 
-            // =====================================================================
-            // OLD SAFARICOM CALLBACK PARSING (commented out — kept for reference)
-            // =====================================================================
-            /*
-            Map<String, Object> body = (Map<String, Object>) payload.get("Body");
-            if (body == null || !body.containsKey("stkCallback")) {
-                return ResponseEntity.status(400).body(Map.of("error", "Missing stkCallback"));
-            }
-            Map<String, Object> stkCallback = (Map<String, Object>) body.get("stkCallback");
-            Integer resultCode = stkCallback.get("ResultCode") instanceof Integer
-                    ? (Integer) stkCallback.get("ResultCode")
-                    : Integer.parseInt(stkCallback.get("ResultCode").toString());
-            String resultDesc = stkCallback.get("ResultDesc") != null
-                    ? stkCallback.get("ResultDesc").toString() : "No description";
-            String checkoutRequestID = stkCallback.get("CheckoutRequestID") != null
-                    ? stkCallback.get("CheckoutRequestID").toString() : null;
-            */
-            // =====================================================================
-            // END OLD SAFARICOM CALLBACK PARSING
-            // =====================================================================
+            // First, try to get 'response' map if it exists
+            Map<String, Object> responseMap = payload.get("response") instanceof Map
+                    ? (Map<String, Object>) payload.get("response")
+                    : null;
 
-
-            // =====================================================================
-            // NEW PAYHERO CALLBACK PARSING
-            // PayHero sends a flat JSON — no nested Body/stkCallback wrapper
-            // =====================================================================
+            // Extract CheckoutRequestID or fallback to User_Reference
             String checkoutRequestID = payload.get("CheckoutRequestID") != null
-                    ? payload.get("CheckoutRequestID").toString() : null;
+                    ? payload.get("CheckoutRequestID").toString()
+                    : responseMap != null && responseMap.get("CheckoutRequestID") != null
+                    ? responseMap.get("CheckoutRequestID").toString()
+                    : responseMap != null && responseMap.get("User_Reference") != null
+                    ? responseMap.get("User_Reference").toString()
+                    : null;
 
             if (checkoutRequestID == null) {
-                System.err.println("Invalid PayHero callback: missing CheckoutRequestID");
-                return ResponseEntity.status(400).body(Map.of("error", "Missing CheckoutRequestID"));
+                System.err.println("Invalid PayHero callback: missing CheckoutRequestID/User_Reference");
+                return ResponseEntity.status(400).body(Map.of("error", "Missing CheckoutRequestID/User_Reference"));
             }
 
-            Integer resultCode = payload.get("ResultCode") instanceof Integer
-                    ? (Integer) payload.get("ResultCode")
-                    : payload.get("ResultCode") != null
-                    ? Integer.parseInt(payload.get("ResultCode").toString())
-                    : -1;
+            // Extract ResultCode
+            Integer resultCode = null;
+            if (responseMap != null && responseMap.get("ResultCode") != null) {
+                resultCode = responseMap.get("ResultCode") instanceof Integer
+                        ? (Integer) responseMap.get("ResultCode")
+                        : Integer.parseInt(responseMap.get("ResultCode").toString());
+            } else if (payload.get("ResultCode") != null) {
+                resultCode = payload.get("ResultCode") instanceof Integer
+                        ? (Integer) payload.get("ResultCode")
+                        : Integer.parseInt(payload.get("ResultCode").toString());
+            } else {
+                resultCode = -1; // unknown
+            }
 
-            String resultDesc = payload.get("ResultDesc") != null
-                    ? payload.get("ResultDesc").toString() : "No description";
-            // =====================================================================
-            // END NEW PAYHERO CALLBACK PARSING
-            // =====================================================================
-
+            // Extract ResultDesc
+            String resultDesc = null;
+            if (responseMap != null && responseMap.get("ResultDesc") != null) {
+                resultDesc = responseMap.get("ResultDesc").toString();
+            } else if (payload.get("ResultDesc") != null) {
+                resultDesc = payload.get("ResultDesc").toString();
+            } else if (responseMap != null && responseMap.get("Status") != null) {
+                // Some callbacks use "Status" field instead
+                resultDesc = responseMap.get("Status").toString();
+            } else {
+                resultDesc = "No description";
+            }
 
             // Find loan and update status
             Optional<LoanApplication> loanOptional = repository.findByCheckoutRequestID(checkoutRequestID);
@@ -475,7 +474,7 @@ public class LoanApplicationController {
 
                 repository.save(loan);
             } else {
-                System.err.println("Loan not found for CheckoutRequestID: " + checkoutRequestID);
+                System.err.println("Loan not found for CheckoutRequestID/User_Reference: " + checkoutRequestID);
             }
 
             return ResponseEntity.ok(Map.of("message", "Callback processed"));
@@ -486,6 +485,7 @@ public class LoanApplicationController {
             return ResponseEntity.status(500).body(Map.of("error", "Callback processing failed"));
         }
     }
+
 
     @GetMapping("/mpesa/status/{checkoutRequestID}")
     public ResponseEntity<?> getPaymentStatus(@PathVariable String checkoutRequestID) {
